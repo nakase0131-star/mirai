@@ -515,6 +515,63 @@
     width: 100%;
     padding: 15px 30px;
   }
+  .feedback-card .btn-primary:disabled{
+    opacity: 0.6;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+  }
+  .fb-status{
+    margin-top: 16px;
+    font-size: 0.88rem;
+    text-align: center;
+    min-height: 1.2em;
+  }
+  .fb-status.ok{ color: var(--accent-deep); }
+  .fb-status.error{ color: #b3261e; }
+
+  .board-list{
+    max-width: 640px;
+    margin: 48px auto 0;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+  }
+  .board-item{
+    background: var(--white);
+    border: 1px solid var(--line);
+    border-radius: 16px;
+    padding: 24px 28px;
+  }
+  .board-item .board-head{
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 10px;
+  }
+  .board-item .board-name{
+    font-weight: 600;
+    font-size: 0.95rem;
+  }
+  .board-item .board-date{
+    font-size: 0.78rem;
+    color: var(--ink-soft);
+    white-space: nowrap;
+  }
+  .board-item .board-message{
+    font-size: 0.92rem;
+    color: var(--ink-soft);
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .board-empty, .board-error{
+    text-align: center;
+    font-size: 0.9rem;
+    color: var(--ink-soft);
+    padding: 20px 0;
+  }
+  .board-error{ color: #b3261e; }
 
   /* ===== Values strip ===== */
   .values{
@@ -928,17 +985,22 @@
         <p>デザインや内容について、率直なご感想をお聞かせください。今後の改善に活用させていただきます。</p>
       </div>
 
-      <form class="feedback-card" onsubmit="return false;">
+      <form class="feedback-card" id="feedback-form">
         <div class="form-group">
           <label for="fb-name">お名前</label>
           <input type="text" id="fb-name" name="name" placeholder="山田 太郎">
         </div>
         <div class="form-group">
           <label for="fb-message">ご意見</label>
-          <textarea id="fb-message" name="message" placeholder="ご意見・ご感想をご自由にお書きください"></textarea>
+          <textarea id="fb-message" name="message" placeholder="ご意見・ご感想をご自由にお書きください" required></textarea>
         </div>
-        <button type="submit" class="btn btn-primary">送信する</button>
+        <button type="submit" class="btn btn-primary" id="fb-submit">送信する</button>
+        <p class="fb-status" id="fb-status" role="status" aria-live="polite"></p>
       </form>
+
+      <div class="board-list" id="board-list">
+        <p class="board-empty" id="board-loading">読み込み中...</p>
+      </div>
     </div>
   </section>
 
@@ -1003,5 +1065,104 @@
   </div>
 </footer>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+  const SUPABASE_URL = "https://pkvoqblnbssjvzjvobha.supabase.co".trim();
+  const SUPABASE_ANON_KEY = "sb_publishable_MCP9BE-NsbmxE8oiQqr9gQ_WzPtGq2H".trim();
+
+  const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+  const form = document.getElementById("feedback-form");
+  const nameInput = document.getElementById("fb-name");
+  const messageInput = document.getElementById("fb-message");
+  const submitBtn = document.getElementById("fb-submit");
+  const statusEl = document.getElementById("fb-status");
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+
+    const message = messageInput.value.trim();
+    if (!message) {
+      statusEl.textContent = "ご意見を入力してください。";
+      statusEl.className = "fb-status error";
+      return;
+    }
+
+    submitBtn.disabled = true;
+    submitBtn.textContent = "送信中...";
+    statusEl.textContent = "";
+    statusEl.className = "fb-status";
+
+    const { error } = await supabaseClient
+      .from("feedback")
+      .insert({
+        name: nameInput.value.trim() || null,
+        message: message,
+      });
+
+    submitBtn.disabled = false;
+    submitBtn.textContent = "送信する";
+
+    if (error) {
+      console.error(error);
+      statusEl.textContent = "送信に失敗しました。[詳細: " + (error.message || "不明なエラー") + " / code: " + (error.code || "-") + "]";
+      statusEl.className = "fb-status error";
+      return;
+    }
+
+    statusEl.textContent = "ご意見を送信しました。ありがとうございます。";
+    statusEl.className = "fb-status ok";
+    form.reset();
+    loadBoard();
+  });
+
+  const boardList = document.getElementById("board-list");
+
+  function escapeHtml(str) {
+    return str.replace(/[&<>"']/g, (c) => ({
+      "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+    }[c]));
+  }
+
+  async function loadBoard() {
+    boardList.innerHTML = '<p class="board-empty">読み込み中...</p>';
+
+    const { data, error } = await supabaseClient
+      .from("feedback")
+      .select("name, message, created_at")
+      .order("created_at", { ascending: false })
+      .limit(50);
+
+    if (error) {
+      console.error(error);
+      boardList.innerHTML = '<p class="board-error">ご意見の読み込みに失敗しました。[詳細: ' + escapeHtml(error.message || "不明なエラー") + ']</p>';
+      return;
+    }
+
+    if (!data || data.length === 0) {
+      boardList.innerHTML = '<p class="board-empty">まだ投稿がありません。最初のご意見をお寄せください。</p>';
+      return;
+    }
+
+    boardList.innerHTML = data.map((item) => {
+      const name = item.name ? escapeHtml(item.name) : "匿名";
+      const message = escapeHtml(item.message);
+      const date = new Date(item.created_at).toLocaleDateString("ja-JP", {
+        year: "numeric", month: "long", day: "numeric"
+      });
+      return (
+        '<div class="board-item">' +
+          '<div class="board-head">' +
+            '<span class="board-name">' + name + '</span>' +
+            '<span class="board-date">' + date + '</span>' +
+          '</div>' +
+          '<p class="board-message">' + message + '</p>' +
+        '</div>'
+      );
+    }).join("");
+  }
+
+  loadBoard();
+</script>
 </body>
 </html>
